@@ -1,5 +1,5 @@
 /*
- * jQuery UI Slider @VERSION
+ * jQuery UI Slider 1.8.1 handle overlap patch by chadnorwood.com
  *
  * Copyright (c) 2010 AUTHORS.txt (http://jqueryui.com/about)
  * Dual licensed under the MIT (MIT-LICENSE.txt)
@@ -181,24 +181,24 @@ $.widget( "ui.slider", $.ui.mouse, {
 						newVal = self._valueMax();
 						break;
 					case $.ui.keyCode.PAGE_UP:
-						newVal = self._trimAlignValue( curVal + ( (self._valueMax() - self._valueMin()) / numPages ) );
+						newVal = curVal + ( (self._valueMax() - self._valueMin()) / numPages );
 						break;
 					case $.ui.keyCode.PAGE_DOWN:
-						newVal = self._trimAlignValue( curVal - ( (self._valueMax() - self._valueMin()) / numPages ) );
+						newVal = curVal - ( (self._valueMax() - self._valueMin()) / numPages );
 						break;
 					case $.ui.keyCode.UP:
 					case $.ui.keyCode.RIGHT:
 						if ( curVal === self._valueMax() ) {
 							return;
 						}
-						newVal = self._trimAlignValue( curVal + step );
+						newVal = curVal + step;
 						break;
 					case $.ui.keyCode.DOWN:
 					case $.ui.keyCode.LEFT:
 						if ( curVal === self._valueMin() ) {
 							return;
 						}
-						newVal = self._trimAlignValue( curVal - step );
+						newVal = curVal - step;
 						break;
 				}
 	
@@ -219,6 +219,12 @@ $.widget( "ui.slider", $.ui.mouse, {
 	
 			});
 
+
+		this._sliderPixels =  ( this.orientation === "vertical" ) ? this.element.outerHeight() : this.element.outerWidth();
+		this._handleSizePixels =  ( this.orientation === "vertical" ) ? this.handles.outerHeight() : this.handles.outerWidth();
+		this._handleSizePercent = 100 * this._handleSizePixels / this._sliderPixels;
+		//console.log('slider.chad.js:_create sliderPixels='+this._sliderPixels +' _handleSizePixels='+this._handleSizePixels +' _handleSizePercent='+this._handleSizePercent );
+		
 		this._refreshValue();
 
 		this._animateOff = false;
@@ -248,6 +254,8 @@ $.widget( "ui.slider", $.ui.mouse, {
 		var o = this.options,
 			position,
 			normValue,
+			percentValue,
+			direction,
 			distance,
 			closestHandle,
 			self,
@@ -259,19 +267,31 @@ $.widget( "ui.slider", $.ui.mouse, {
 		if ( o.disabled ) {
 			return false;
 		}
-
 		this.elementSize = {
 			width: this.element.outerWidth(),
 			height: this.element.outerHeight()
 		};
 		this.elementOffset = this.element.offset();
 
+		// find closest handle to mouse 
 		position = { x: event.pageX, y: event.pageY };
-		normValue = this._normValueFromMouse( position );
-		distance = this._valueMax() - this._valueMin() + 1;
+		percentValue = 100 * this._percentValueFromMouse( position );
+		distance = 106; // any number greater than 100 percent
+		direction = ( this.orientation === "vertical" ) ? 'bottom' : 'left';	
+
 		self = this;
 		this.handles.each(function( i ) {
-			var thisDistance = Math.abs( normValue - self.values(i) );
+			var thisDistance = percentValue - parseFloat( $(this).css(direction) );
+			if (thisDistance > 0) {
+				thisDistance= thisDistance - self._handleSizePercent; // account for the closer edge of handle
+				if (thisDistance < 0) 
+					thisDistance = 0; // clicked inside handle
+			} else {
+				thisDistance = - thisDistance;
+			}
+			
+			//console.log('slider.chad.js:_mouseCapture i='+i +' distance='+distance +' thisDistance='+thisDistance +' percentValue='+percentValue +' self._handleSizePercent='+self._handleSizePercent );
+		
 			if ( distance > thisDistance ) {
 				distance = thisDistance;
 				closestHandle = $( this );
@@ -279,13 +299,13 @@ $.widget( "ui.slider", $.ui.mouse, {
 			}
 		});
 
-		// workaround for bug #3736 (if both handles of a range are at 0,
+		// NOT NEEDED - workaround for bug #3736 (if both handles of a range are at 0,
 		// the first is always used as the one with least distance,
 		// and moving it is obviously prevented by preventing negative ranges)
-		if( o.range === true && this.values(1) === o.min ) {
-			index += 1;
-			closestHandle = $( this.handles[index] );
-		}
+		//if( o.range === true && this.values(1) === o.min ) {
+		//	index += 1;
+		//	closestHandle = $( this.handles[index] );
+		//}
 
 		allowed = this._start( event, index );
 		if ( allowed === false ) {
@@ -293,7 +313,7 @@ $.widget( "ui.slider", $.ui.mouse, {
 		}
 		this._mouseSliding = true;
 
-		self._handleIndex = index;
+		this._handleIndex = index;
 
 		closestHandle
 			.addClass( "ui-state-active" )
@@ -311,6 +331,7 @@ $.widget( "ui.slider", $.ui.mouse, {
 		};
 
 		normValue = this._normValueFromMouse( position );
+
 		this._slide( event, index, normValue );
 		this._animateOff = true;
 		return true;
@@ -323,7 +344,7 @@ $.widget( "ui.slider", $.ui.mouse, {
 	_mouseDrag: function( event ) {
 		var position = { x: event.pageX, y: event.pageY },
 			normValue = this._normValueFromMouse( position );
-		
+
 		this._slide( event, this._handleIndex, normValue );
 
 		return false;
@@ -348,6 +369,44 @@ $.widget( "ui.slider", $.ui.mouse, {
 	},
 
 	_normValueFromMouse: function( position ) {
+		var	pixelMouse,
+			pixelRangeSlider,
+			percentMouse,
+			valueTotal,
+			valueMouse;
+				
+		pixelRangeSlider = this._sliderPixels - (2 * this._handleSizePixels);
+		
+		if ( this.orientation === "horizontal" ) {
+			// pixelMouse gets pixels of Handle Center, even if user clicks edge of handle
+			pixelMouse = position.x - this.elementOffset.left - ( this._clickOffset ? this._clickOffset.left : 0 );
+			percentMouse = (pixelMouse - this._handleSizePixels * (0.5 + this._handleIndex) ) / pixelRangeSlider;
+		} else {
+			pixelMouse = position.y - this.elementOffset.top;
+			percentMouse = (pixelMouse - this._handleSizePixels * (0.5 + (1 - this._handleIndex)) ) / pixelRangeSlider;
+		}
+		
+		if ( percentMouse > 1 ) {
+			percentMouse = 1;
+		}
+		if ( percentMouse < 0 ) {
+			percentMouse = 0;
+		}
+		if ( this.orientation === "vertical" ) {
+			percentMouse = 1 - percentMouse;
+		}		
+		
+		valueTotal = this._valueMax() - this._valueMin();
+		valueMouse = this._valueMin() + percentMouse * valueTotal;
+		
+		//console.log('slider.chad.js:_normValueFromMouse i='+this._handleIndex +' _sliderPixels='+this._sliderPixels +' pixelRangeSlider='+pixelRangeSlider 
+		//		+" x="+position.x+" y="+position.y +' elementOffset.top='+this.elementOffset.top +' pixelMouse='+Math.round(pixelMouse)
+		//		+' -- percentMouse='+percentMouse +' valueTotal='+valueTotal +' valueMouse='+valueMouse );
+
+		return this._trimAlignValue( valueMouse );
+	},
+	
+	_percentValueFromMouse: function( position ) { 
 		var pixelTotal,
 			pixelMouse,
 			percentMouse,
@@ -356,10 +415,10 @@ $.widget( "ui.slider", $.ui.mouse, {
 
 		if ( this.orientation === "horizontal" ) {
 			pixelTotal = this.elementSize.width;
-			pixelMouse = position.x - this.elementOffset.left - ( this._clickOffset ? this._clickOffset.left : 0 );
+			pixelMouse = position.x - this.elementOffset.left;
 		} else {
 			pixelTotal = this.elementSize.height;
-			pixelMouse = position.y - this.elementOffset.top - ( this._clickOffset ? this._clickOffset.top : 0 );
+			pixelMouse = position.y - this.elementOffset.top;
 		}
 
 		percentMouse = ( pixelMouse / pixelTotal );
@@ -372,12 +431,14 @@ $.widget( "ui.slider", $.ui.mouse, {
 		if ( this.orientation === "vertical" ) {
 			percentMouse = 1 - percentMouse;
 		}
+		
+		//		console.log('slider.chad.js:_percentValueFromMouse _sliderPixels='+this._sliderPixels  
+		//		+" y="+position.y +' elementOffset.top='+this.elementOffset.top +' pixelMouse='+pixelMouse +' pixelTotal='+pixelTotal
+		//		+' -- percentMouse='+percentMouse );
 
-		valueTotal = this._valueMax() - this._valueMin();
-		valueMouse = this._valueMin() + percentMouse * valueTotal;
-
-		return this._trimAlignValue( valueMouse );
+		return parseFloat( percentMouse.toFixed(5) ); 
 	},
+	
 
 	_start: function( event, index ) {
 		var uiHash = {
@@ -406,6 +467,7 @@ $.widget( "ui.slider", $.ui.mouse, {
 			}
 
 			if ( newVal !== this.values( index ) ) {
+				//console.log('slider.chad.js:_slide handle_index='+index+' origVal='+this.values(index)+' newVal='+newVal+' otherVal='+otherVal);
 				newValues = this.values();
 				newValues[ index ] = newVal;
 				// A slide can be canceled by returning false from the slide callback
@@ -591,12 +653,12 @@ $.widget( "ui.slider", $.ui.mouse, {
 		if ( val > this._valueMax() ) {
 			return this._valueMax();
 		}
-		var step = ( this.options.step > 0 ) ? this.options.step : 1,
+		var step = this.options.step,
 			valModStep = val % step,
 			alignValue = val - valModStep;
 
-		if ( Math.abs(valModStep) * 2 >= step ) {
-			alignValue += ( valModStep > 0 ) ? step : ( -step );
+		if ( valModStep >= ( step / 2 ) ) {
+			alignValue += step;
 		}
 
 		// Since JavaScript has problems with large floats, round
@@ -619,30 +681,56 @@ $.widget( "ui.slider", $.ui.mouse, {
 			animate = ( !this._animateOff ) ? o.animate : false,
 			valPercent,
 			_set = {},
-			lastValPercent,
+			lastValPercent = 0,
+			pixelPercent,
+			val2pixel,
+			h0Percent,
+			h1Percent,
+			rangeOffsetPercent,
+			rangeSizePercent,
 			value,
 			valueMin,
 			valueMax;
 
 		if ( this.options.values && this.options.values.length ) {
 			this.handles.each(function( i, j ) {
+				
 				valPercent = ( self.values(i) - self._valueMin() ) / ( self._valueMax() - self._valueMin() ) * 100;
-				_set[ self.orientation === "horizontal" ? "left" : "bottom" ] = valPercent + "%";
+
+				val2pixel = (self._sliderPixels - 2 * self._handleSizePixels) / self._sliderPixels;
+				pixelPercent = valPercent * val2pixel;
+				
+				h0Percent = Math.round(pixelPercent);
+				h1Percent = Math.round(pixelPercent + self._handleSizePercent);
+				rangeOffsetPercent = Math.floor(pixelPercent + self._handleSizePercent);
+				rangeSizePercent = Math.ceil(
+						self._handleSizePercent*0.3 + // extend range into handle to make sure its long enough
+						val2pixel * (valPercent - lastValPercent) );
+						
+				//console.log('slider.chad.js:_refreshValue index='+i +' val='+self.values(i) +' valPercent='+valPercent
+		        //   +' rangeOffsetPercent='+rangeOffsetPercent+' rangeSizePercent='+rangeSizePercent +' h0Percent='+h0Percent +' h1Percent='+h1Percent
+		        //  +' pixelPercent='+pixelPercent +' handlePercent='+self._handleSizePixels); 
+		
+				// update the handle
+				_set[ self.orientation === "horizontal" ? "left" : "bottom" ] = (i ? h1Percent : h0Percent) + "%";
 				$( this ).stop( 1, 1 )[ animate ? "animate" : "css" ]( _set, o.animate );
+				
+				// update the range in middle
 				if ( self.options.range === true ) {
 					if ( self.orientation === "horizontal" ) {
 						if ( i === 0 ) {
-							self.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { left: valPercent + "%" }, o.animate );
+							self.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { left: rangeOffsetPercent + "%" }, o.animate );
 						}
 						if ( i === 1 ) {
-							self.range[ animate ? "animate" : "css" ]( { width: ( valPercent - lastValPercent ) + "%" }, { queue: false, duration: o.animate } );
+							self.range[ animate ? "animate" : "css" ]( { width: rangeSizePercent + "%" }, { queue: false, duration: o.animate } );
 						}
 					} else {
 						if ( i === 0 ) {
-							self.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { bottom: ( valPercent ) + "%" }, o.animate );
+							self.range.stop( 1, 1 )[ animate ? "animate" : "css" ]( { bottom: rangeOffsetPercent + "%" }, o.animate );
 						}
 						if ( i === 1 ) {
-							self.range[ animate ? "animate" : "css" ]( { height: ( valPercent - lastValPercent ) + "%" }, { queue: false, duration: o.animate } );
+							//self.range[ animate ? "animate" : "css" ]( { height: ( valPercent - lastValPercent ) + "%" }, { queue: false, duration: o.animate } );
+							self.range[ animate ? "animate" : "css" ]( { height: rangeSizePercent + "%" }, { queue: false, duration: o.animate } );
 						}
 					}
 				}
@@ -676,7 +764,7 @@ $.widget( "ui.slider", $.ui.mouse, {
 });
 
 $.extend( $.ui.slider, {
-	version: "@VERSION"
+	version: "1.8.1"
 });
 
 }(jQuery));
